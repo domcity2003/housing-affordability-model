@@ -23,12 +23,13 @@ TEST = {"v10blend": os.environ.get("BASE", "new_pred_v10.npy")}  # BASE=new_pred
 def main(name, k, comps):
     y, folds, _, _ = pickle.loads((OUT / "mats.pkl").read_bytes())
     P = np.column_stack([np.load(OUT / f"oof_p_{c}.npy") for c in comps])
-    nested = np.zeros(len(y))
+    blend_oof = np.zeros(len(y))
     for a, b in folds:
         wf, _ = nnls(P[a], y[a])
-        nested[b] = P[b] @ wf
+        blend_oof[b] = P[b] @ wf
     w, _ = nnls(P, y)
-    print(dict(zip(comps, (w / w.sum()).round(3))), f"nested new-ZIP CV {np.sqrt(np.mean((y - nested) ** 2)):.3f}")
+    print(dict(zip(comps, (w / w.sum()).round(3))),
+          f"new-ZIP blend on cached OOF predictions {np.sqrt(np.mean((y - blend_oof) ** 2)):.3f}")
     T = np.column_stack([np.load(OUT / TEST.get(c, f"new_pred_{c}.npy")) for c in comps])
     tr, te = load(ROOT / "data")
     last = seen_drift(tr, k)

@@ -2,6 +2,23 @@
 
 Predicting the share of households in a US ZIP code that are not housing-cost-burdened, for ZIPs the model has seen before and for ZIPs it has never seen. The two cases behave so differently that most of the work was recognising which one mattered.
 
+## Run the baseline
+
+| Evaluation | Baseline | RMSE |
+| --- | --- | ---: |
+| Seen ZIPs, May to June | Carry the previous month's value forward and adjust for average drift | 1.208 |
+| Unseen ZIPs, five folds grouped by ZIP | LightGBM with ZIP and market features | 12.329 |
+
+The baseline tests two different prediction settings. The competition score weights unseen ZIP error four times as heavily, so the later experiments focus there. A mean-only prediction on unseen ZIPs scores 28.467 RMSE.
+
+```bash
+python -m pip install -r requirements.txt
+# Place the competition's train.csv, test.csv and sample_submission.csv under data/.
+python src/baseline.py
+```
+
+The script prints both validation results and writes `outputs/v1_baseline.csv`. The competition files must be obtained separately.
+
 ## The problem
 
 Regression on 6,830 ZIPs observed in May and June 2026 (13,660 rows), predicting July. The target is the percentage of a ZIP's households whose monthly housing cost is at or below 30% of the ZIP's median monthly income. Features cover rent, income, population and age, owners versus renters, household size and composition, and length of residence. Of the July ZIPs, 6,830 appear in training and 1,704 are new.
@@ -30,9 +47,11 @@ Error is RMSE, weighted `0.2 * RMSE(seen) + 0.8 * RMSE(new)`. Only the provided 
 | CatBoost, depth 6 | 11.73 |
 | NNLS blend of LightGBM and CatBoost, raw and logit target | 11.63 |
 | + within-group percentile ranks, ZIP-vs-city ratios, kNN target means in rank space, quantile matching | 11.01 |
-| + July alignment, MLPs on quantile-normalised features, tuned LightGBM, rank model (nested-CV blend) | 10.71 |
+| + July alignment, MLPs on quantile-normalised features, tuned LightGBM, rank model (blend on saved out-of-fold predictions) | 10.71 |
 
 Gains stopped at about 10.71: extra seeds, SVR, and more MLP variants moved the blend by under 0.01.
+
+The 10.71 is an exploratory blend estimate. `src/combine.py` refits blend weights per fold using cached out-of-fold predictions. Upstream models were fitted once per original split. Predictions used to fit the blend in one split can come from models trained on ZIPs in that blend's evaluation fold. A fully nested estimate would regenerate the component predictions within each outer training fold.
 
 **Things that did not help.** Huber loss, prediction stretching and isotonic calibration, city-level quantile matching, kNN in metro-rank space, an LGB stacker over out-of-fold predictions (11.20 against 11.04 for NNLS), and adding metro-level drift for seen ZIPs. New-ZIP errors are not spatially clustered (leave-one-out residual correlation within city, ZIP3 and metro is about 0), so residual-correction stages by geography had nothing to find.
 
@@ -49,21 +68,14 @@ src/experiments.py  ablations, GroupKFold by ZIP
 src/models.py       model definitions; mats.py, full_mats.py save fold and full-refit design matrices
 src/push.py         the rank, kNN and quantile-matching feature stages
 src/nn.py           MLPs on quantile-normalised features; svr.py, rankmodel.py, tune.py, tuned.py
-src/combine.py      nested-CV NNLS blend and final prediction file
+src/combine.py      NNLS blend of cached fold predictions and final prediction file
 src/seen.py         seen-ZIP drift variants
 src/train_v*.py     earlier staged builds
 ```
 
-## Running it
+## Later experiments
 
-```bash
-pip install -r requirements.txt
-# place train.csv, test.csv and sample_submission.csv under data/
-python src/baseline.py
-python src/models.py && python src/train_v2.py
-```
-
-The full blend needs the cached out-of-fold arrays from `src/push.py` and `src/mats.py` in `outputs/`, about 10 minutes of mostly CatBoost per stage on a laptop CPU. The data and `outputs/` are not in the repository.
+`python src/models.py` and `python src/train_v2.py` run intermediate modeling stages. The full blend needs cached fold arrays built by the research scripts, starting with `src/push.py` and `src/mats.py`. Some stages take about 10 minutes of mostly CatBoost on a laptop CPU. The baseline command above runs without those caches.
 
 ## Limits
 
